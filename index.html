@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dieline Editor • Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Dieline Editor</div>
+    <div class="controls">
+      <label>Units
+        <select id="units">
+          <option value="mm" selected>mm</option>
+          <option value="in">in</option>
+        </select>
+      </label>
+      <label>Material
+        <select id="materialPreset">
+          <option value="paper_250gsm" selected>Paperboard 250gsm (~0.30mm)</option>
+          <option value="paper_300gsm">Paperboard 300gsm (~0.40mm)</option>
+          <option value="paper_400gsm">Paperboard 400gsm (~0.55mm)</option>
+          <option value="corr_b">Corrugated B‑flute (~3.0mm)</option>
+          <option value="corr_e">Corrugated E‑flute (~1.5mm)</option>
+        </select>
+      </label>
+      <label>Snap
+        <select id="snapMode">
+          <option value="grid" selected>Grid</option>
+          <option value="verts">Vertices</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <label>Grid (mm)
+        <input id="gridSize" type="number" min="1" value="5" />
+      </label>
+      <button id="btnAddPerf">Add perf line</button>
+      <button id="btnClearPerf">Clear perf</button>
+      <button id="btnExportSVG">Export SVG</button>
+      <button id="btnExportDXF">Export DXF</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="section">
+        <div class="section-title">Templates</div>
+        <div class="template-list" id="templateList">
+          <!-- populated by JS -->
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Parameters</div>
+        <div class="params" id="params">
+          <!-- populated by JS -->
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Validation</div>
+        <ul id="validation"></ul>
+      </div>
+    </aside>
+
+    <section class="viewport">
+      <div id="canvasWrap">
+        <svg id="svg" viewBox="0 0 1000 700" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id="gridPattern" width="10" height="10" patternUnits="userSpaceOnUse">
+              <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#eee" stroke-width="1"/>
+            </pattern>
+          </defs>
+          <rect x="0" y="0" width="100%" height="100%" fill="url(#gridPattern)"/>
+          <g id="g-cut" stroke="#ff0000" stroke-width="0.25" fill="none"></g>
+          <g id="g-crease" stroke="#00a0ff" stroke-width="0.25" fill="none" stroke-dasharray="4 2"></g>
+          <g id="g-perf" stroke="#ff7f00" stroke-width="0.25" fill="none" stroke-dasharray="2 2"></g>
+          <g id="g-verts" fill="#333"></g>
+        </svg>
+      </div>
+    </section>
+  </div>
+
+  <footer class="footer">
+    <div>Colors: <span class="swatch sw-cut"></span> Cut • <span class="swatch sw-crease"></span> Crease • <span class="swatch sw-perf"></span> Perforation. All paths are strokes for Illustrator.</div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
