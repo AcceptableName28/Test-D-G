@@ -2,88 +2,161 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dieline Editor • Prototype</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Dieline Studio — Beta</title>
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- Libs -->
+  <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.1/dist/svg2pdf.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">Dieline Editor</div>
-    <div class="controls">
-      <label>Units
-        <select id="units">
-          <option value="mm" selected>mm</option>
-          <option value="in">in</option>
-        </select>
+  <header class="app-header">
+    <div class="brand">Dieline Studio</div>
+    <div class="toolbar">
+      <button id="btnZoomOut" title="Zoom Out (−)">−</button>
+      <button id="btnZoomIn" title="Zoom In (+)">+</button>
+      <button id="btnFit" title="Fit to View (F)">Fit</button>
+      <button id="btn100" title="100%">100%</button>
+      <span class="sep"></span>
+      <label class="tog">
+        <input id="toggleGrid" type="checkbox" checked />
+        <span>Grid</span>
       </label>
-      <label>Material
-        <select id="materialPreset">
-          <option value="paper_250gsm" selected>Paperboard 250gsm (~0.30mm)</option>
-          <option value="paper_300gsm">Paperboard 300gsm (~0.40mm)</option>
-          <option value="paper_400gsm">Paperboard 400gsm (~0.55mm)</option>
-          <option value="corr_b">Corrugated B‑flute (~3.0mm)</option>
-          <option value="corr_e">Corrugated E‑flute (~1.5mm)</option>
-        </select>
+      <label class="tog">
+        <input id="toggleDims" type="checkbox" checked />
+        <span>Dims</span>
       </label>
-      <label>Snap
-        <select id="snapMode">
-          <option value="grid" selected>Grid</option>
-          <option value="verts">Vertices</option>
-          <option value="off">Off</option>
-        </select>
+      <label class="tog">
+        <input id="toggleGuides" type="checkbox" checked />
+        <span>Guides</span>
       </label>
-      <label>Grid (mm)
-        <input id="gridSize" type="number" min="1" value="5" />
+      <label class="tog">
+        <input id="toggleEdit" type="checkbox" />
+        <span>Edit Nodes</span>
       </label>
-      <button id="btnAddPerf">Add perf line</button>
-      <button id="btnClearPerf">Clear perf</button>
-      <button id="btnExportSVG">Export SVG</button>
-      <button id="btnExportDXF">Export DXF</button>
     </div>
   </header>
 
-  <div class="main">
+  <main class="app">
+    <!-- Sidebar -->
     <aside class="sidebar">
-      <div class="section">
-        <div class="section-title">Templates</div>
-        <div class="template-list" id="templateList">
-          <!-- populated by JS -->
+      <section>
+        <label>Units</label>
+        <select id="units">
+          <option value="mm" selected>Millimeters</option>
+          <option value="in">Inches</option>
+        </select>
+      </section>
+
+      <section>
+        <label>Template</label>
+        <select id="templateSelect"></select>
+        <input id="templateSearch" placeholder="Search…" />
+      </section>
+
+      <section id="paramSection">
+        <!-- Dynamic parameter fields get injected here -->
+      </section>
+
+      <section>
+        <label>Material</label>
+        <select id="materialSelect"></select>
+        <div class="subnote" id="materialNote"></div>
+      </section>
+
+      <section class="two">
+        <div>
+          <label>Bleed</label>
+          <input id="bleed" type="number" step="0.1" value="3" />
         </div>
-      </div>
-      <div class="section">
-        <div class="section-title">Parameters</div>
-        <div class="params" id="params">
-          <!-- populated by JS -->
+        <div>
+          <label>Safety</label>
+          <input id="safety" type="number" step="0.1" value="3" />
         </div>
-      </div>
-      <div class="section">
-        <div class="section-title">Validation</div>
-        <ul id="validation"></ul>
-      </div>
+      </section>
+
+      <section class="two">
+        <div>
+          <label>Grid (mm)</label>
+          <input id="gridSize" type="number" step="0.5" value="1" />
+        </div>
+        <div>
+          <label>Stroke (px)</label>
+          <input id="strokePx" type="number" step="0.5" value="2.5" />
+        </div>
+      </section>
+
+      <section>
+        <label>Score mode</label>
+        <select id="scoreMode">
+          <option value="score" selected>Score (solid)</option>
+          <option value="perf8x3">Perforation (8–3)</option>
+          <option value="perf12x4">Perforation (12–4)</option>
+          <option value="zip">Zip-tear + tab</option>
+        </select>
+      </section>
+
+      <section>
+        <button id="btnApply" class="primary">Apply</button>
+        <button id="btnReset">Reset</button>
+      </section>
+
+      <section>
+        <button id="btnExport" class="accent">Export AI-ready ZIP</button>
+        <div class="subnote">Exports: <code>dieline.svg</code>, <code>production.pdf</code>, <code>preflight.txt</code>, <code>readme.txt</code></div>
+      </section>
+
+      <section>
+        <details>
+          <summary>Legend</summary>
+          <div class="legend">
+            <span><i class="swatch cut"></i> Cut</span>
+            <span><i class="swatch crease"></i> Score</span>
+            <span><i class="swatch perf"></i> Perforation</span>
+            <span><i class="swatch bleed"></i> Bleed</span>
+            <span><i class="swatch guide"></i> Guides</span>
+          </div>
+        </details>
+      </section>
     </aside>
 
-    <section class="viewport">
-      <div id="canvasWrap">
-        <svg id="svg" viewBox="0 0 1000 700" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+    <!-- Preview -->
+    <section class="stage-wrap">
+      <div id="stage" class="stage" aria-label="Preview canvas" tabindex="0">
+        <svg id="viewer" xmlns="http://www.w3.org/2000/svg" role="img">
           <defs>
-            <pattern id="gridPattern" width="10" height="10" patternUnits="userSpaceOnUse">
-              <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#eee" stroke-width="1"/>
+            <!-- patterns for perf dashes -->
+            <pattern id="dash-8-3" patternUnits="userSpaceOnUse" width="11" height="2">
+              <rect width="8" height="2" fill="currentColor"></rect>
+            </pattern>
+            <pattern id="dash-12-4" patternUnits="userSpaceOnUse" width="16" height="2">
+              <rect width="12" height="2" fill="currentColor"></rect>
             </pattern>
           </defs>
-          <rect x="0" y="0" width="100%" height="100%" fill="url(#gridPattern)"/>
-          <g id="g-cut" stroke="#ff0000" stroke-width="0.25" fill="none"></g>
-          <g id="g-crease" stroke="#00a0ff" stroke-width="0.25" fill="none" stroke-dasharray="4 2"></g>
-          <g id="g-perf" stroke="#ff7f00" stroke-width="0.25" fill="none" stroke-dasharray="2 2"></g>
-          <g id="g-verts" fill="#333"></g>
+
+          <g id="gridLayer"></g>
+          <g id="bleedLayer"></g>
+          <g id="cutLayer" data-role="cut"></g>
+          <g id="scoreLayer" data-role="score"></g>
+          <g id="perfLayer" data-role="perf"></g>
+          <g id="dimsLayer"></g>
+          <g id="guidesLayer"></g>
+          <g id="handlesLayer"></g>
         </svg>
+        <div id="preflight" class="preflight"></div>
       </div>
     </section>
-  </div>
+  </main>
 
-  <footer class="footer">
-    <div>Colors: <span class="swatch sw-cut"></span> Cut • <span class="swatch sw-crease"></span> Crease • <span class="swatch sw-perf"></span> Perforation. All paths are strokes for Illustrator.</div>
+  <footer class="app-footer">
+    <span id="status">Ready.</span>
+    <span id="zoomDisplay">100%</span>
   </footer>
 
-  <script src="app.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
