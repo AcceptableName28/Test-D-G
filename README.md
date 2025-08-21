@@ -1,43 +1,35 @@
-# Dieline Editor — Prototype
 
-This is a minimal, self‑contained prototype for building dielines with **exact dimensions**, **template presets**, **snap‑to editing**, **cut/crease/perf strokes** and a **basic manufacturing check**.
+# Dieline Lab Pro (React + TypeScript)
 
-## How to run
-1. Unzip.
-2. Open `index.html` in a modern browser (Chrome/Edge/Firefox). No server needed.
+A fuller prototype of an adaptive dieline UI with live SVG, export, presets, and JSON save/load.
 
-## What’s included
-- Templates (starter set): Reverse Tuck End (RTE), Mailer (0427‑style simplified), Sleeve. Add more via `TEMPLATES` in `app.js`.
-- Exact dimensions in **mm** or **inches**.
-- Material presets with **thickness (caliper)**; thickness is used for simple allowances and checks.
-- Snap‑to: **grid** or **existing vertices**, plus **draggable** vertex handles.
-- **Cut / Crease / Perf** rendered as **strokes** (0.25 pt). Colors are Illustrator‑friendly:
-  - Cut: #FF0000
-  - Crease: #00A0FF (dashed)
-  - Perf: #FF7F00 (dashed)
-- **Export SVG** and **DXF** (LINE entities on named layers). Both open in Adobe Illustrator for editing.
+## Quick start
+```bash
+npm i
+npm run dev
+```
 
-## Manufacturing checks (basic)
-Rules implemented in `validate()`:
-- Minimum glue flap: `max(10 mm, 3×caliper)` for paperboard; `max(20 mm, 4×caliper)` for corrugated.
-- Tuck flap ≥ ~20% of panel length (guardrail).
-- Panel minimums: L/W/H ≥ 15 mm.
-- Parallel crease spacing ≥ 2× caliper.
+## Features
+- Field matrix with dynamic show/hide (top/bottom styles).
+- Presets: RTE+Snap, STE+Auto, Mailer (TTAB).
+- Window cutout with rounded corners on a chosen panel.
+- Thumb notch (toggle + width).
+- Corrugated mode flag (wire up downstream rules as needed).
+- Dimension overlay with arrows and labels.
+- Export **SVG** and **PNG** (client-side).
+- Save/Load state as **JSON** for QA and sharing.
+- Vitest unit tests for dimension math.
+- GitHub Actions: CI and Pages deploy.
 
-> These are conservative guardrails — please tailor to your converter’s specs.
+## Build & Deploy
+```bash
+npm run build
+npm run preview  # local preview of dist
+```
 
-## Extending
-- Add templates: push new objects to `TEMPLATES` with a `build(params, caliper)` function that returns `cut`, `crease`, `perf` arrays of segments.
-- Add validations: extend `validate()`.
-- Add export formats: see `exportSVG()` and `exportDXF()` as patterns.
+To deploy on GitHub Pages, keep the included workflow and enable Pages → GitHub Actions in repo settings.
 
-## Illustrator usage
-- Open exported **SVG** or **DXF**. Strokes are on layers: CUT, CREASE, PERF.
-- (Optional) Map each color to a named **spot color** swatch if your workflow requires it (e.g., “CutContour”, “Crease”).
-
-## Roadmap (next)
-- More parametric templates (tuck‑top auto bottom, 4/6‑corner, gable, pillow, trays, hang tab, header card).
-- User‑placed **tear/perf** segments with length & pitch control.
-- **ZIP export** bundling SVG, DXF and a spec sheet (add JSZip or generate server‑side).
-- Material **bending allowances** and **K‑factor** for corrugate.
-
+## Where to extend
+- Add SRP tear lines, hanger tab, score compensation, and full DXF/PDF export.
+- Refactor `buildDielineSVG` into a geometry model that can emit both SVG and DXF.
+- Add Storybook or Playwright visual tests for presets.
