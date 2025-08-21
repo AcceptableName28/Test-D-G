@@ -1,496 +1,808 @@
-/* Dieline Editor – minimal working prototype
- * - Template library (starter set)
- * - Exact dimensions + units
- * - Material presets (thickness)
- * - Snap-to grid / vertices; draggable vertex editing
- * - Cut/Crease/Perf as strokes
- * - Validation rules (basic)
- * - Export SVG & DXF (Illustrator-friendly)
- */
+/* Dieline Studio core
+   - Geometry in millimeters (mm). Viewer scales with a px-per-mm factor for preview.
+   - Export uses mm viewBox so Illustrator sees true sizes.
+*/
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+const $ = (sel, el=document) => el.querySelector(sel);
+const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
 
+/* ---------- State ---------- */
 const state = {
-  units: "mm",
-  unitScale: 1, // mm factor; in = 25.4
-  material: { id:"paper_250gsm", name:"Paperboard 250gsm", caliper_mm:0.30 },
-  snapMode: "grid",
-  gridSizeMM: 5,
-  currentTemplate: null,
-  params: {},
-  geometry: { cut: [], crease: [], perf: [] }, // arrays of segments
-  vertices: [], // editable points
-  perfSegments: []
+  units: 'mm',
+  pxPerMm: 3,             // preview only; auto-overridden by Fit
+  zoom: 1,                // viewer zoom multiplier
+  params: {},             // current template params
+  material: null,         // selected material object
+  templateId: null,
+  scoreMode: 'score',
+  strokePx: 2.5,
+  grid: 1,
+  showGrid: true,
+  showDims: true,
+  showGuides: true,
+  editMode: false,
+  geometry: null          // holds generated geometry { bbox, cuts, scores, perfs, bleeds, dims }
 };
 
-const MATERIALS = {
-  paper_250gsm: { name:"Paperboard 250gsm", caliper_mm:0.30 },
-  paper_300gsm: { name:"Paperboard 300gsm", caliper_mm:0.40 },
-  paper_400gsm: { name:"Paperboard 400gsm", caliper_mm:0.55 },
-  corr_b: { name:"Corrugated B‑flute", caliper_mm:3.00 },
-  corr_e: { name:"Corrugated E‑flute", caliper_mm:1.50 },
-};
+/* ---------- Materials (thickness in mm) ---------- */
+const MATERIALS = [
+  {id:'card-0.20', name:'Paperboard 0.20 mm (~8pt)', t:0.20, type:'paper'},
+  {id:'card-0.25', name:'Paperboard 0.25 mm (~10pt)', t:0.25, type:'paper'},
+  {id:'card-0.30', name:'Paperboard 0.30 mm (~12pt)', t:0.30, type:'paper'},
+  {id:'card-0.35', name:'Paperboard 0.35 mm (~14pt)', t:0.35, type:'paper'},
+  {id:'card-0.40', name:'Paperboard 0.40 mm (~16pt)', t:0.40, type:'paper'},
+  {id:'card-0.46', name:'Paperboard 0.46 mm (~18pt)', t:0.46, type:'paper'},
+  {id:'card-0.50', name:'Paperboard 0.50 mm (~20pt)', t:0.50, type:'paper'},
+  {id:'card-0.60', name:'Paperboard 0.60 mm (~24pt)', t:0.60, type:'paper'},
+  {id:'card-0.80', name:'Paperboard 0.80 mm (~32pt)', t:0.80, type:'paper'},
+  {id:'card-1.00', name:'Paperboard 1.00 mm (~40pt)', t:1.00, type:'paper'},   // requested
+  {id:'card-1.20', name:'Paperboard 1.20 mm (~48pt)', t:1.20, type:'paper'},
 
-/* ---------- Templates ----------
- * Each template defines:
- * - id, name, tags
- * - params: array of {key,label,default,min,max,step}
- * - build(params, materialCaliper) -> {cut:[seg], crease:[seg], perf:[seg], vertices:[pt]}
- * All dimensions in mm.
- */
-const TEMPLATES = [
-  {
-    id: "rte-carton",
-    name: "Reverse Tuck End Carton (RTE)",
-    tags: "folding-carton",
-    params: [
-      { key:"L", label:"Length (front)", default:120, min:20, max:800, step:1 },
-      { key:"W", label:"Width (side)", default:40, min:15, max:500, step:1 },
-      { key:"H", label:"Height", default:160, min:20, max:800, step:1 },
-      { key:"glue", label:"Glue flap", default:15, min:6, max:40, step:1 },
-      { key:"tuck", label:"Tuck flap", default:15, min:8, max:60, step:1 },
-    ],
-    build: buildRTE
-  },
-  {
-    id: "mailer-0427",
-    name: "Mailer (FEFCO 0427‑style)",
-    tags: "corrugated mailer",
-    params: [
-      { key:"L", label:"Internal Length", default:200, min:40, max:1200, step:1 },
-      { key:"W", label:"Internal Width", default:120, min:30, max:1000, step:1 },
-      { key:"H", label:"Internal Height", default:60, min:20, max:600, step:1 },
-      { key:"glue", label:"Glue flap", default:25, min:10, max:45, step:1 },
-      { key:"lock", label:"Lock tab", default:15, min:8, max:40, step:1 },
-    ],
-    build: buildMailer0427
-  },
-  {
-    id: "sleeve",
-    name: "Product Sleeve",
-    tags: "sleeve",
-    params: [
-      { key:"L", label:"Length", default:160, min:30, max:800, step:1 },
-      { key:"W", label:"Wrap (flat)", default:120, min:40, max:1000, step:1 },
-      { key:"glue", label:"Glue flap", default:12, min:6, max:30, step:1 },
-    ],
-    build: buildSleeve
-  }
-  // More can be added following same pattern
+  {id:'corr-F', name:'Corrugated F flute (~0.8 mm)', t:0.8, type:'corr'},
+  {id:'corr-E', name:'Corrugated E flute (~1.2 mm)', t:1.2, type:'corr'},
+  {id:'corr-B', name:'Corrugated B flute (~2.8 mm)', t:2.8, type:'corr'},
+  {id:'corr-C', name:'Corrugated C flute (~3.8 mm)', t:3.8, type:'corr'},
+  {id:'corr-EB', name:'Corrugated EB (~4.5 mm)', t:4.5, type:'corr'},
+  {id:'corr-BC', name:'Corrugated BC (~6.5 mm)', t:6.5, type:'corr'},
+
+  {id:'custom', name:'Custom…', t:0.5, type:'custom'}
 ];
 
-function mm(v){ return v; }
-function toUnits(vMM){
-  return state.units === "mm" ? vMM : vMM / 25.4;
-}
-function fromUnits(v){
-  return state.units === "mm" ? v : v * 25.4;
-}
-
-/* ---- builders: produce straight-line segments (x1,y1,x2,y2) ---- */
-function buildRTE(p, cal){
-  // Simple panel strip: [Glue][Panel L][Panel W][Panel L][Panel W]
-  // Height H with top/bottom tuck flaps
-  const H = p.H;
-  const L = p.L;
-  const W = p.W;
-  const G = p.glue;
-  const TF = p.tuck;
-
-  // Add small allowances for fold thickness (very simplified “wrap” = caliper)
-  const k = cal; // simplistic allowance
-  const x0 = 10; const y0 = 10;
-
-  const widths = [G, L+k, W+k, L+k, W+k];
-  const X = [x0];
-  for (let i=0;i<widths.length;i++) X.push(X[i] + widths[i]);
-
-  const top = y0;
-  const mid = y0 + H;
-  const bot = y0 + H + TF*2;
-
-  const cut = []; const crease = []; const perf = [];
-  // Outer rectangle (including tucks height)
-  cut.push([X[0], top-TF, X.at(-1), top-TF]);
-  cut.push([X.at(-1), top-TF, X.at(-1), bot]);
-  cut.push([X.at(-1), bot, X[0], bot]);
-  cut.push([X[0], bot, X[0], top-TF]);
-
-  // Vertical creases between panels
-  for(let i=1;i<X.length-1;i++){
-    crease.push([X[i], top-TF, X[i], bot]);
-  }
-  // Top & bottom tuck cut lines over panels (excluding glue)
-  // Simplified: just straight trims
-  cut.push([X[1], top-TF, X.at(-1), top-TF]); // top trim (skip glue)
-  cut.push([X[1], bot, X.at(-1), bot]); // bottom trim (skip glue)
-
-  // Horizontal creases at panel top & bottom
-  crease.push([X[0], top, X.at(-1), top]);
-  crease.push([X[0], mid, X.at(-1), mid]);
-
-  // Glue flap vertical edges already in outer, add perforation option across a panel (if user added later)
-  const verts = collectVerts(cut, crease, perf);
-  return { cut, crease, perf, vertices: verts };
-}
-
-function buildMailer0427(p, cal){
-  // Very simplified mailer: body width = L + 2*H + allowances, height = W + flap
-  // Not a perfect 0427 but useful as starting point
-  const L = p.L, W = p.W, H = p.H, G = p.glue, lock = p.lock;
-  const wrap = L + 2*H + 3*cal; // allowance
-  const bodyH = W + H + lock + cal;
-  const x0=10, y0=10;
-  const cut=[], crease=[], perf=[];
-
-  // Outer
-  cut.push([x0, y0, x0+wrap+G, y0]);
-  cut.push([x0+wrap+G, y0, x0+wrap+G, y0+bodyH]);
-  cut.push([x0+wrap+G, y0+bodyH, x0, y0+bodyH]);
-  cut.push([x0, y0+bodyH, x0, y0]);
-
-  // Glue flap
-  crease.push([x0+G, y0, x0+G, y0+bodyH]);
-
-  // Main vertical folds (side walls)
-  const v1 = x0+G+H+cal;
-  const v2 = v1+L+cal;
-  const v3 = v2+H+cal;
-  [v1,v2,v3].forEach(x=> crease.push([x, y0, x, y0+bodyH]));
-
-  // Lid hinge
-  const lidY = y0+W;
-  crease.push([x0, lidY, x0+wrap+G, lidY]);
-
-  // Simple lock tab cut at top center
-  const cx = x0+G+H+cal + L/2;
-  cut.push([cx-10, y0, cx-10, y0+10]);
-  cut.push([cx+10, y0, cx+10, y0+10]);
-  cut.push([cx-10, y0+10, cx+10, y0+10]);
-
-  const verts = collectVerts(cut, crease, perf);
-  return { cut, crease, perf, vertices: verts };
-}
-
-function buildSleeve(p, cal){
-  const L=p.L, W=p.W, G=p.glue;
-  const x0=10, y0=10;
-  const cut=[], crease=[], perf=[];
-  // Outer
-  cut.push([x0, y0, x0+W+G, y0]);
-  cut.push([x0+W+G, y0, x0+W+G, y0+L]);
-  cut.push([x0+W+G, y0+L, x0, y0+L]);
-  cut.push([x0, y0+L, x0, y0]);
-  // Glue flap
-  crease.push([x0+W, y0, x0+W, y0+L]);
-  const verts = collectVerts(cut, crease, perf);
-  return { cut, crease, perf, vertices: verts };
-}
-
-/* ---- Validation rules (basic/common-sense) ---- */
-function validate(params, caliper){
-  const msgs = [];
-
-  function ok(msg){ msgs.push({ok:true, msg}); }
-  function fail(msg){ msgs.push({ok:false, msg}); }
-
-  const mm = (x)=>x;
-  const { L, W, H, glue, tuck, lock } = params;
-
-  // Glue flap: >= max(10mm, 3×caliper) for paperboard; >= max(20mm, 4×caliper) corrugated
-  if (glue !== undefined){
-    const minGlue = (caliper <= 1.0) ? Math.max(10, 3*caliper) : Math.max(20, 4*caliper);
-    (glue >= minGlue) ? ok(`Glue flap OK (≥ ${minGlue.toFixed(1)} mm)`) : fail(`Glue flap too small (< ${minGlue.toFixed(1)} mm)`);
-  }
-  // Tuck flap length: ≥ 0.2 × L (very rough)
-  if (tuck !== undefined && L !== undefined){
-    const minTuck = Math.max(8, 0.2*L);
-    (tuck >= minTuck) ? ok(`Tuck flap OK (≥ ${minTuck.toFixed(0)} mm)`) : fail(`Tuck flap too small (< ${minTuck.toFixed(0)} mm)`);
-  }
-  // Minimum panel width/height sanity
-  ["L","W","H"].forEach(k=>{
-    if (params[k] !== undefined && params[k] < 15){
-      fail(`${k} looks very small (< 15 mm)`);
-    }
-  });
-  // Parallel crease spacing ≥ 2 × caliper (avoid cracking)
-  if (H && caliper){
-    const minGap = 2*caliper;
-    (H >= minGap) ? ok(`Panel height OK vs caliper`) : fail(`Panel height (${H} mm) is close to material thickness (${caliper} mm)`);
-  }
-
-  return msgs;
-}
-
-/* ---- Rendering & interaction ---- */
-function collectVerts(...groups){
-  const set = new Map();
-  groups.flat().forEach(seg=>{
-    const [x1,y1,x2,y2] = seg;
-    const key1 = `${x1.toFixed(3)},${y1.toFixed(3)}`;
-    const key2 = `${x2.toFixed(3)},${y2.toFixed(3)}`;
-    set.set(key1, {x:x1,y:y1});
-    set.set(key2, {x:x2,y:y2});
-  });
-  return Array.from(set.values());
-}
-
-function render(){
-  const svg = $("#svg");
-  const gCut = $("#g-cut"), gCrease = $("#g-crease"), gPerf=$("#g-perf"), gVerts=$("#g-verts");
-  [gCut,gCrease,gPerf,gVerts].forEach(g=> g.innerHTML="");
-
-  const scale = 3.77953; // px per mm @ 96dpi
-  const gridPx = state.gridSizeMM * scale;
-  $("#gridPattern").setAttribute("width", gridPx);
-  $("#gridPattern").setAttribute("height", gridPx);
-
-  const drawSegments = (g, segs) => {
-    segs.forEach(([x1,y1,x2,y2])=>{
-      const el = document.createElementNS("http://www.w3.org/2000/svg","line");
-      el.setAttribute("x1", x1*scale);
-      el.setAttribute("y1", y1*scale);
-      el.setAttribute("x2", x2*scale);
-      el.setAttribute("y2", y2*scale);
-      g.appendChild(el);
+/* ---------- Utilities ---------- */
+const mm = (v) => v; // placeholder for units (kept in mm)
+const U = {
+  round(n, p=3){ const f = Math.pow(10,p); return Math.round(n*f)/f },
+  path(points, close=false){
+    // points: [{x,y},{x,y}...]
+    return `M${points.map((p,i)=> `${U.round(p.x)} ${U.round(p.y)}`).join(' L ')}${close?' Z':''}`;
+  },
+  rect(x,y,w,h){
+    return `M${x} ${y} H${x+w} V${y+h} H${x} Z`;
+  },
+  addPath(parent, d, stroke, width, cls=''){
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill','none');
+    p.setAttribute('stroke', stroke);
+    p.setAttribute('stroke-width', width);
+    if (cls) p.setAttribute('class', cls);
+    parent.appendChild(p);
+    return p;
+  },
+  addText(parent, x,y, str, size=3){
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x', x); t.setAttribute('y', y);
+    t.setAttribute('font-size', size); t.textContent = str;
+    t.setAttribute('font-family','system-ui,Segoe UI,Arial');
+    t.setAttribute('text-anchor','middle');
+    parent.appendChild(t); return t;
+  },
+  clear(el){ while(el.firstChild) el.removeChild(el.firstChild); },
+  bboxOfPaths(paths){
+    // paths: [{d}] rough bbox by parsing numbers
+    let xs=[], ys=[];
+    paths.forEach(p=>{
+      const nums = p.d.match(/-?\d+(\.\d+)?/g);
+      if(!nums) return;
+      nums.forEach((n,i)=> (i%2? ys : xs).push(parseFloat(n)));
     });
+    if(!xs.length) return {x:0,y:0,w:10,h:10};
+    const minx=Math.min(...xs), miny=Math.min(...ys);
+    const maxx=Math.max(...xs), maxy=Math.max(...ys);
+    return {x:minx, y:miny, w:maxx-minx, h:maxy-miny};
+  }
+};
+
+/* ---------- Templates ---------- */
+/* Each generator returns:
+   {
+     params,    // sanitized params (mm)
+     cut: [ { d } ],
+     score: [ { d } ],
+     perf: [ { d } ],
+     bleed: [ { d } ],
+     dims:  [ {text, x, y} ],
+     bbox: {x,y,w,h}
+   }
+*/
+const TEMPLATES = [
+  // --- Folding Cartons ---
+  {
+    id:'ste', name:'Straight Tuck End (STE)', cat:'Folding Carton',
+    defaults:{ W:80, H:120, D:40, glue:15, tuck:18, dust:15 },
+    gen(p){
+      const {W,H,D,glue,tuck,dust} = p;
+      // Panels: [GLUE][P1][P2][P3][P4]
+      const x0=0, y0=0;
+      const P = [
+        {x:x0,            w:glue},
+        {x:x0+glue,       w:W},
+        {x:x0+glue+W,     w:W},
+        {x:x0+glue+2*W,   w:W},
+        {x:x0+glue+3*W,   w:W}
+      ];
+      const width = glue + 4*W;
+      const height = H + 2*dust + tuck;
+      const yBody = dust + tuck;
+
+      const cut=[], score=[], perf=[], bleed=[];
+      // outer
+      cut.push({d: U.rect(0,0,width,height)});
+      // top/bottom dust (same D scale) — simplified rectangular
+      P.forEach((pan,i)=>{
+        // top dust
+        cut.push({d: U.rect(pan.x,0, pan.w, dust)});
+        // bottom dust
+        cut.push({d: U.rect(pan.x, yBody+H, pan.w, dust)});
+      });
+      // tuck flaps on P2 and P4 (straight tuck)
+      cut.push({d: U.rect(P[1].x, dust, P[1].w, tuck)});
+      cut.push({d: U.rect(P[3].x, dust, P[3].w, tuck)});
+
+      // vertical scores between panels
+      [glue, glue+W, glue+2*W, glue+3*W, glue+4*W].forEach(x=>{
+        score.push({d:`M${x} ${dust} V${dust+tuck+H}`});
+      });
+      // horizontal scores
+      score.push({d:`M0 ${yBody} H${width}`});
+      score.push({d:`M0 ${yBody+H} H${width}`});
+      // tuck score
+      score.push({d:`M${P[1].x} ${dust} H${P[1].x+W}`});
+      score.push({d:`M${P[3].x} ${dust} H${P[3].x+W}`});
+      // bleed safety (guides)
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+
+      const dims=[{text:`W ${W}mm · H ${H}mm · D ${D}mm`, x:width/2, y:height+10}];
+      const bbox={x:0,y:0,w:width,h:height};
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  {
+    id:'rte', name:'Reverse Tuck End (RTE)', cat:'Folding Carton',
+    defaults:{ W:90, H:130, D:35, glue:14, tuck:18, dust:14 },
+    gen(p){
+      // identical to STE but tucks on P2 top / P4 bottom reversed
+      const {W,H,D,glue,tuck,dust}=p;
+      const width=glue+4*W, height=H+2*dust+tuck, yBody=dust+tuck;
+      const cut=[], score=[], perf=[], bleed=[];
+      cut.push({d:U.rect(0,0,width,height)});
+      // dusts
+      for(let i=0;i<5;i++){
+        const x = (i===0?0:glue + (i-1)*W);
+        const w = (i===0?glue:W);
+        cut.push({d:U.rect(x,0,w,dust)});
+        cut.push({d:U.rect(x,yBody+H,w,dust)});
+      }
+      // tucks: P2 top, P4 bottom (simplified)
+      cut.push({d:U.rect(glue+W, dust, W, tuck)});         // top
+      cut.push({d:U.rect(glue+3*W, yBody+H, W, dust)});    // bottom "tuck" simplified as extra flap
+      // scores
+      [glue, glue+W, glue+2*W, glue+3*W, glue+4*W].forEach(x=> score.push({d:`M${x} ${dust} V${dust+tuck+H}`}));
+      score.push({d:`M0 ${yBody} H${width}`});
+      score.push({d:`M0 ${yBody+H} H${width}`});
+      score.push({d:`M${glue+W} ${dust} H${glue+2*W}`});
+      const dims=[{text:`W ${W} · H ${H} · D ${D}`, x:width/2, y:height+10}];
+      const bbox={x:0,y:0,w:width,h:height};
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  {
+    id:'autoBottom', name:'Tuck Top Auto Bottom (Crash-Lock)', cat:'Folding Carton',
+    defaults:{ W:80, H:120, D:40, glue:16, tuck:18, dust:14, lock:22 },
+    gen(p){
+      const {W,H,glue,tuck,dust,lock} = p;
+      const width=glue+4*W, height=(H + tuck + dust + lock + dust);
+      const yTop=dust+tuck, yBottom=yTop+H;
+      const cut=[], score=[], perf=[], bleed=[];
+
+      // outer
+      cut.push({d:U.rect(0,0,width,height)});
+
+      // auto-bottom lock geometry (simplified: two diagonal locks at P2/P3 bottom)
+      const xP2 = glue+W, xP3 = glue+2*W;
+      const botY = yBottom + dust;
+      // two triangular locks
+      cut.push({d: U.path([{x:xP2, y:botY}, {x:xP2+W*0.5, y:botY+lock}, {x:xP2+W, y:botY}], true)});
+      cut.push({d: U.path([{x:xP3, y:botY}, {x:xP3+W*0.5, y:botY+lock}, {x:xP3+W, y:botY}], true)});
+
+      // dust top & bottom rectangles
+      for(let i=0;i<5;i++){
+        const x = (i===0?0:glue+(i-1)*W);
+        const w = (i===0?glue:W);
+        cut.push({d:U.rect(x,0,w,dust)});     // top dust
+        cut.push({d:U.rect(x, yBottom, w, dust)}); // bottom dust above lock
+      }
+      // top tuck on P2
+      cut.push({d:U.rect(glue+W, dust, W, tuck)});
+
+      // scores between panels
+      [glue, glue+W, glue+2*W, glue+3*W, glue+4*W].forEach(x=> score.push({d:`M${x} ${dust} V${yBottom}`}));
+      // horizontal scores/top/bottom
+      score.push({d:`M0 ${yTop} H${width}`});
+      score.push({d:`M0 ${yBottom} H${width}`});
+
+      // bleed guide
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+
+      const dims=[{text:`W ${W} · H ${H} · lock ${lock}`, x:width/2, y:height+10}];
+      const bbox={x:0,y:0,w:width,h:height};
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  {
+    id:'snapLock', name:'Tuck Top Snap-Lock Bottom', cat:'Folding Carton',
+    defaults:{ W:90, H:120, D:40, glue:16, tuck:18, dust:14, snap:30 },
+    gen(p){
+      const {W,H,glue,tuck,dust,snap} = p;
+      const width=glue+4*W, height=H+tuck+2*dust+snap;
+      const yTop=dust+tuck, yBottom=yTop+H;
+      const cut=[], score=[], perf=[], bleed=[];
+      cut.push({d:U.rect(0,0,width,height)});
+      // snap-lock bottom (simplified tabs on P2/P3)
+      const x2=glue+W, x3=glue+2*W;
+      cut.push({d:U.rect(x2, yBottom, W, snap)});
+      cut.push({d:U.rect(x3, yBottom, W, snap)});
+      // dusts + tuck
+      for(let i=0;i<5;i++){
+        const x=(i===0?0:glue+(i-1)*W), w=(i===0?glue:W);
+        cut.push({d:U.rect(x, 0, w, dust)});
+        cut.push({d:U.rect(x, yBottom+snap-dust, w, dust)});
+      }
+      cut.push({d:U.rect(glue+W, dust, W, tuck)});
+      // scores
+      [glue, glue+W, glue+2*W, glue+3*W, glue+4*W].forEach(x=> score.push({d:`M${x} ${dust} V${yBottom}`}));
+      score.push({d:`M0 ${yTop} H${width}`});
+      score.push({d:`M0 ${yBottom} H${width}`});
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+      const bbox={x:0,y:0,w:width,h:height};
+      const dims=[{text:`W ${W} · H ${H}`, x:width/2, y:height+10}];
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  { id:'sleeve', name:'Sleeve / Slipcase', cat:'Folding Carton',
+    defaults:{ W:120, H:80, glue:15, bleed:3 },
+    gen(p){
+      const {W,H,glue} = p;
+      const width=glue+2*W, height=H+10;
+      const cut=[], score=[], perf=[], bleed=[];
+      cut.push({d:U.rect(0,0,width,height)});
+      // panel divisions
+      [glue, glue+W, glue+2*W].forEach(x=> score.push({d:`M${x} 0 V${height}`}));
+      // open ends
+      cut.push({d:`M0 0 H${width}`}); cut.push({d:`M0 ${height} H${width}`});
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+      const bbox={x:0,y:0,w:width,h:height};
+      const dims=[{text:`W ${W} · H ${H}`, x:width/2, y:height+10}];
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  // --- Corrugated (FEFCO) ---
+
+  {
+    id:'0201', name:'0201 Regular Slotted Container (RSC)', cat:'Corrugated',
+    defaults:{ L:250, W:150, H:120, slot:6 },
+    gen(p){
+      const {L,W,H,slot} = p;  // L=length along flaps
+      const glue=35;
+      const width=glue + 2*(L+W);
+      const height=H + 2*W;
+      const cut=[], score=[], perf=[], bleed=[];
+      // outer
+      cut.push({d:U.rect(0,0,width,height)});
+      // vertical panel scores (Glue + four panels)
+      const xs=[glue, glue+L, glue+L+W, glue+L+W+L, glue+L+W+L+W];
+      xs.forEach(x=> score.push({d:`M${x} ${W} V${W+H}`}));
+      // horizontal scores
+      score.push({d:`M0 ${W} H${width}`});
+      score.push({d:`M0 ${W+H} H${width}`});
+      // top/bottom flaps slots
+      // simplified slots at centerlines
+      xs.slice(1,4).forEach(x=>{
+        const cx = x;
+        cut.push({d:`M${cx} 0 V${W/2 - slot/2}`});
+        cut.push({d:`M${cx} ${W/2 + slot/2} V${W}`});
+        cut.push({d:`M${cx} ${W+H} V${W+H + W/2 - slot/2}`});
+        cut.push({d:`M${cx} ${W+H + W/2 + slot/2} V${height}`});
+      });
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+      const bbox={x:0,y:0,w:width,h:height};
+      const dims=[{text:`L ${L} · W ${W} · H ${H}`, x:width/2, y:height+10}];
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  {
+    id:'0427', name:'0427 Mailer (roll-end)', cat:'Corrugated',
+    defaults:{ L:260, W:180, H:50, tuck:25 },
+    gen(p){
+      const {L,W,H,tuck}=p;
+      const width = (L+W)*2;
+      const height = H + W*2 + tuck;
+      const cut=[], score=[], perf=[], bleed=[];
+      cut.push({d:U.rect(0,0,width,height)});
+
+      const y1=W, y2=W+H, y3=W+H+W;
+      // horizontal scores
+      score.push({d:`M0 ${y1} H${width}`});
+      score.push({d:`M0 ${y2} H${width}`});
+      score.push({d:`M0 ${y3} H${width}`});
+
+      // vertical panels
+      const x1=L, x2=L+W, x3=L+W+L;
+      [x1,x2,x3].forEach(x=> score.push({d:`M${x} 0 V${height}`}));
+
+      // lid tuck (top row)
+      cut.push({d:U.rect(x2, 0, L, tuck)});
+      // side flaps
+      cut.push({d:U.rect(0, y1, L, H)});
+      cut.push({d:U.rect(x3, y1, L, H)});
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+      const bbox={x:0,y:0,w:width,h:height};
+      const dims=[{text:`L ${L} · W ${W} · H ${H}`, x:width/2, y:height+10}];
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  },
+
+  {
+    id:'0429', name:'0429 Pizza Box', cat:'Corrugated',
+    defaults:{ L:300, W:300, H:40, tab:25 },
+    gen(p){
+      const {L,W,H,tab}=p;
+      const width=L*2+W, height=W+H*2+tab;
+      const cut=[], score=[], perf=[], bleed=[];
+      cut.push({d:U.rect(0,0,width,height)});
+
+      const x1=L, x2=L+W; const y1=H, y2=H+W, y3=H*2+W;
+      // scores
+      [x1,x2].forEach(x=> score.push({d:`M${x} 0 V${height}`}));
+      [y1,y2,y3].forEach(y=> score.push({d:`M0 ${y} H${width}`}));
+      // lid tab
+      cut.push({d:U.rect(x1, 0, W, tab)});
+      // side walls (simplified)
+      cut.push({d:U.rect(0, y1, L, W)});
+      cut.push({d:U.rect(x2, y1, L, W)});
+      bleed.push({d:U.rect(0.5,0.5,width-1,height-1)});
+      const bbox={x:0,y:0,w:width,h:height};
+      const dims=[{text:`L ${L} · W ${W} · H ${H}`, x:width/2, y:height+10}];
+      return {cut,score,perf,bleed,dims,bbox};
+    }
+  }
+];
+
+/* ---------- DOM refs ---------- */
+const viewer = $('#viewer');
+const layers = {
+  grid:   $('#gridLayer'),
+  bleed:  $('#bleedLayer'),
+  cut:    $('#cutLayer'),
+  score:  $('#scoreLayer'),
+  perf:   $('#perfLayer'),
+  dims:   $('#dimsLayer'),
+  guides: $('#guidesLayer'),
+  handles:$('#handlesLayer')
+};
+const ui = {
+  templateSelect: $('#templateSelect'),
+  templateSearch: $('#templateSearch'),
+  paramSection:   $('#paramSection'),
+  units:          $('#units'),
+  material:       $('#materialSelect'),
+  materialNote:   $('#materialNote'),
+  bleed:          $('#bleed'),
+  safety:         $('#safety'),
+  grid:           $('#gridSize'),
+  strokePx:       $('#strokePx'),
+  scoreMode:      $('#scoreMode'),
+  btnApply:       $('#btnApply'),
+  btnReset:       $('#btnReset'),
+  btnExport:      $('#btnExport'),
+  btnFit:         $('#btnFit'),
+  btnZoomIn:      $('#btnZoomIn'),
+  btnZoomOut:     $('#btnZoomOut'),
+  btn100:         $('#btn100'),
+  toggleGrid:     $('#toggleGrid'),
+  toggleDims:     $('#toggleDims'),
+  toggleGuides:   $('#toggleGuides'),
+  toggleEdit:     $('#toggleEdit'),
+  stage:          $('#stage'),
+  preflight:      $('#preflight'),
+  status:         $('#status'),
+  zoomDisplay:    $('#zoomDisplay')
+};
+
+/* ---------- UI setup ---------- */
+function populateTemplates(){
+  const grouped = {};
+  TEMPLATES.forEach(t => {
+    if(!grouped[t.cat]) grouped[t.cat]=[];
+    grouped[t.cat].push(t);
+  });
+  ui.templateSelect.innerHTML = '';
+  for(const cat of Object.keys(grouped)){
+    const og = document.createElement('optgroup');
+    og.label = cat;
+    grouped[cat].forEach(t=>{
+      const o=document.createElement('option');
+      o.value=t.id; o.textContent=t.name; og.appendChild(o);
+    });
+    ui.templateSelect.appendChild(og);
+  }
+  ui.templateSelect.value = state.templateId || TEMPLATES[0].id;
+}
+
+function populateMaterials(){
+  ui.material.innerHTML = '';
+  MATERIALS.forEach(m=>{
+    const o=document.createElement('option'); o.value=m.id; o.textContent=m.name;
+    ui.material.appendChild(o);
+  });
+  ui.material.value = state.material?.id || 'card-0.50';
+  updateMaterialNote();
+}
+
+function updateMaterialNote(){
+  const m = MATERIALS.find(x=>x.id===ui.material.value);
+  state.material = m;
+  ui.materialNote.textContent = m.type==='corr' ?
+    `Corrugated approx caliper ${m.t} mm (affects slot width & allowances).` :
+    (m.id==='custom' ? 'Set custom thickness in checks.' :
+    `Paperboard caliper ${m.t} mm (affects flap & tongue clearances).`);
+}
+
+/* dynamic parameters for current template */
+function renderParamFields(){
+  const tpl = TEMPLATES.find(t=>t.id===ui.templateSelect.value);
+  state.templateId = tpl.id;
+  const defs = tpl.defaults;
+  const paramKeys = Object.keys(defs);
+  ui.paramSection.innerHTML = '';
+  paramKeys.forEach(k=>{
+    const wrap=document.createElement('div');
+    const label=document.createElement('label'); label.textContent=k;
+    const inp=document.createElement('input'); inp.type='number'; inp.step='0.1'; inp.value = state.params[k] ?? defs[k];
+    inp.id = `param_${k}`;
+    wrap.appendChild(label); wrap.appendChild(inp);
+    ui.paramSection.appendChild(wrap);
+  });
+}
+
+/* ---------- Geometry generation & drawing ---------- */
+function readParams(){
+  const tpl = TEMPLATES.find(t=>t.id===state.templateId);
+  const obj = {};
+  for(const k of Object.keys(tpl.defaults)){
+    const v = parseFloat($(`#param_${k}`).value);
+    obj[k] = isFinite(v) ? v : tpl.defaults[k];
+  }
+  state.params = obj;
+  state.grid = parseFloat(ui.grid.value) || 1;
+  state.strokePx = parseFloat(ui.strokePx.value) || 2.5;
+  state.scoreMode = ui.scoreMode.value;
+}
+
+function generate(){
+  const tpl = TEMPLATES.find(t=>t.id===state.templateId);
+  const p = {...tpl.defaults, ...state.params};
+  const g = tpl.gen(p);
+
+  // convert some score lines to perf depending on scoreMode
+  if(state.scoreMode.startsWith('perf')){
+    g.perf = g.perf.concat(g.score); // treat all fold lines as perf
+    g.score = [];
+  } else if(state.scoreMode==='zip'){
+    // add a tear strip across body (middle)
+    const y = g.bbox.y + g.bbox.h/2;
+    g.perf.push({d:`M${g.bbox.x} ${y} H${g.bbox.x+g.bbox.w}`});
+  }
+  state.geometry = g;
+}
+
+function draw(){
+  const g = state.geometry;
+  const sPx = state.strokePx;
+
+  // clear layers
+  Object.values(layers).forEach(U.clear);
+
+  // grid
+  if(state.showGrid){
+    const step = state.grid;
+    const {x,y,w,h} = g.bbox;
+    const gx = Math.floor(x/step)*step, gy=Math.floor(y/step)*step;
+    for(let X=gx; X<=x+w; X+=step){ U.addPath(layers.grid, `M${X} ${y} V${y+h}`, 'rgba(128,128,128,.35)', .2); }
+    for(let Y=gy; Y<=y+h; Y+=step){ U.addPath(layers.grid, `M${x} ${Y} H${x+w}`, 'rgba(128,128,128,.35)', .2); }
+  }
+
+  // bleed (guides)
+  if(g.bleed) g.bleed.forEach(p=> U.addPath(layers.bleed, p.d, 'var(--bleed)', .5));
+
+  // cut/score/perf
+  const addGroupPaths = (arr, target, cls, strokeVar) => {
+    arr.forEach(p=> U.addPath(target, p.d, `var(${strokeVar})`, sPx, cls));
   };
+  addGroupPaths(g.cut, layers.cut, 'cut', '--cut');
+  addGroupPaths(g.score, layers.score, 'score', '--crease');
+  addGroupPaths(g.perf, layers.perf, 'perf', '--perf');
 
-  drawSegments(gCut, state.geometry.cut);
-  drawSegments(gCrease, state.geometry.crease);
-  drawSegments(gPerf, state.geometry.perf);
+  // dims
+  if(state.showDims && g.dims){
+    g.dims.forEach(d=> U.addText(layers.dims, d.x, d.y, d.text, 4));
+  }
 
-  // Vertex handles
-  state.vertices.forEach((p,idx)=>{
-    const el = document.createElementNS("http://www.w3.org/2000/svg","circle");
-    el.setAttribute("cx", p.x*scale);
-    el.setAttribute("cy", p.y*scale);
-    el.setAttribute("r", 3);
-    el.setAttribute("data-vidx", idx);
-    el.style.cursor = "pointer";
-    gVerts.appendChild(el);
-  });
+  // guides (panel dividers from score lines, lighter)
+  if(state.showGuides && g.score){
+    g.score.forEach(p=> U.addPath(layers.guides, p.d, 'var(--guide)', .6));
+  }
+
+  updateViewBoxToFit(g.bbox);
+  ui.status.textContent = `Template: ${TEMPLATES.find(t=>t.id===state.templateId).name}`;
+  runPreflight();
+  refreshHandles();   // if edit mode is ON
 }
 
-function snapPoint(x, y){
-  if (state.snapMode === "off") return {x,y};
-  if (state.snapMode === "grid"){
-    const g = state.gridSizeMM;
-    return { x: Math.round(x/g)*g, y: Math.round(y/g)*g };
-  }
-  if (state.snapMode === "verts"){
-    // snap to nearest vertex if within radius 4mm
-    const r=4, rr=r*r;
-    let best = null, bestd=1e9;
-    state.vertices.forEach(p=>{
-      const dx=x-p.x, dy=y-p.y, d=dx*dx+dy*dy;
-      if (d<bestd && d<=rr){ bestd=d; best=p; }
-    });
-    return best ? {x:best.x, y:best.y} : {x,y};
-  }
-  return {x,y};
+/* viewer fit & zoom */
+function updateViewBoxToFit(bbox){
+  // add margin
+  const pad = 20; // mm
+  const x = bbox.x - pad, y=bbox.y - pad, w=bbox.w + 2*pad, h=bbox.h + 2*pad;
+  viewer.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
+
+  // compute zoom so SVG fits its pixel box
+  const rect = viewer.getBoundingClientRect();
+  const zx = rect.width / w, zy = rect.height / h;
+  const fit = Math.min(zx, zy);
+  state.zoom = fit;
+  ui.zoomDisplay.textContent = `${Math.round(fit*100)}%`;
 }
 
-function attachDrag(){
-  const svg = $("#svg");
-  let dragging = null;
+/* manual zoom */
+function zoomBy(f){
+  const vb = viewer.viewBox.baseVal;
+  const cx = vb.x + vb.width/2, cy = vb.y + vb.height/2;
+  const w = vb.width / f, h = vb.height / f;
+  viewer.setAttribute('viewBox', `${cx - w/2} ${cy - h/2} ${w} ${h}`);
+  state.zoom *= f; ui.zoomDisplay.textContent = `${Math.round(state.zoom*100)}%`;
+}
+function zoomTo100(){
+  // 100% here = 1 px per mm inside current viewport ratio; emulate by scaling by factor
+  updateViewBoxToFit(state.geometry.bbox);
+  const vb = viewer.viewBox.baseVal;
+  const f = state.zoom / 1; // go back to fit then adjust? keep simple: show fit as 100% to users
+  state.zoom = 1; ui.zoomDisplay.textContent = `100%`;
+}
 
-  svg.addEventListener("pointerdown", (e)=>{
-    const t = e.target;
-    if (t.tagName.toLowerCase()==="circle" && t.hasAttribute("data-vidx")){
-      dragging = { idx: parseInt(t.getAttribute("data-vidx")) };
-      svg.setPointerCapture(e.pointerId);
+/* panning */
+let isPanning=false, panStart=null;
+viewer.addEventListener('pointerdown', (e)=>{
+  isPanning = true;
+  viewer.setPointerCapture(e.pointerId);
+  const vb = viewer.viewBox.baseVal;
+  panStart = {x:e.clientX, y:e.clientY, vx:vb.x, vy:vb.y};
+});
+viewer.addEventListener('pointermove', (e)=>{
+  if(!isPanning) return;
+  const vb = viewer.viewBox.baseVal;
+  const scaleX = vb.width / viewer.clientWidth;
+  const scaleY = vb.height / viewer.clientHeight;
+  const dx = (e.clientX - panStart.x) * scaleX;
+  const dy = (e.clientY - panStart.y) * scaleY;
+  viewer.setAttribute('viewBox', `${panStart.vx - dx} ${panStart.vy - dy} ${vb.width} ${vb.height}`);
+});
+viewer.addEventListener('pointerup', ()=>{ isPanning=false; });
+
+/* ---------- Node editing ---------- */
+let handleRefs = []; // {el, pathIdx, type:'cut'|'score'|'perf', pointIndex}
+function refreshHandles(){
+  U.clear(layers.handles);
+  handleRefs = [];
+  if(!state.editMode) return;
+
+  // Simplified: expose vertices for CUT paths only by sampling their 'd' numbers
+  const arr = [...layers.cut.querySelectorAll('path')];
+  arr.forEach((p,pi)=>{
+    const nums = p.getAttribute('d').match(/-?\d+(\.\d+)?/g);
+    if(!nums) return;
+    for(let i=0;i<nums.length;i+=2){
+      const cx=parseFloat(nums[i]), cy=parseFloat(nums[i+1]);
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('r', 1.8); c.setAttribute('class','handle');
+      c.setAttribute('cx', cx); c.setAttribute('cy', cy);
+      c.dataset.pathIndex = pi; c.dataset.pointIndex = (i/2);
+      c.addEventListener('pointerdown', startDragHandle);
+      layers.handles.appendChild(c);
+      handleRefs.push({el:c, pathIdx:pi, pointIndex:(i/2)});
     }
   });
-  svg.addEventListener("pointermove", (e)=>{
-    if (!dragging) return;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    const scr = pt.matrixTransform(svg.getScreenCTM().inverse());
-    const scale = 3.77953;
-    let x = scr.x/scale, y = scr.y/scale;
-    ({x,y} = snapPoint(x,y));
-    // Move the vertex and all segments that use it
-    const v = state.vertices[dragging.idx];
-    const ox=v.x, oy=v.y;
-    v.x=x; v.y=y;
-    const moveIfMatch = (seg)=>{
-      if (Math.abs(seg[0]-ox)<1e-6 && Math.abs(seg[1]-oy)<1e-6){ seg[0]=x; seg[1]=y; }
-      if (Math.abs(seg[2]-ox)<1e-6 && Math.abs(seg[3]-oy)<1e-6){ seg[2]=x; seg[3]=y; }
-    };
-    state.geometry.cut.forEach(moveIfMatch);
-    state.geometry.crease.forEach(moveIfMatch);
-    state.geometry.perf.forEach(moveIfMatch);
-    render();
-  });
-  svg.addEventListener("pointerup", (e)=>{
-    if (dragging){ svg.releasePointerCapture(e.pointerId); dragging=null; }
-  });
 }
 
-function setTemplate(t){
-  state.currentTemplate = t;
-  state.params = {};
-  const paramsDiv = $("#params");
-  paramsDiv.innerHTML = "";
-  t.params.forEach(p=>{
-    state.params[p.key] = p.default;
-    const row = document.createElement("div");
-    row.className = "param";
-    const lab = document.createElement("label"); lab.textContent = p.label;
-    const inp = document.createElement("input");
-    inp.type="number"; inp.value = toUnits(p.default).toFixed(2);
-    inp.min = toUnits(p.min); inp.max = toUnits(p.max); inp.step = (state.units==="mm"?p.step: (p.step/25.4).toFixed(3));
-    inp.addEventListener("input", ()=>{
-      state.params[p.key] = fromUnits(parseFloat(inp.value)||0);
-      rebuild();
-    });
-    row.appendChild(lab); row.appendChild(inp);
-    paramsDiv.appendChild(row);
-  });
-  rebuild();
+let drag={active:false};
+function startDragHandle(e){
+  drag.active=true;
+  const el=e.target; el.setPointerCapture(e.pointerId);
+  drag.handle=el; drag.start={x:e.clientX,y:e.clientY};
+  const vb=viewer.viewBox.baseVal;
+  drag.scaleX = vb.width / viewer.clientWidth;
+  drag.scaleY = vb.height / viewer.clientHeight;
 }
+viewer.addEventListener('pointermove', (e)=>{
+  if(!drag.active) return;
+  const hb = drag.handle;
+  const nx = parseFloat(hb.getAttribute('cx')) + (e.movementX * drag.scaleX);
+  const ny = parseFloat(hb.getAttribute('cy')) + (e.movementY * drag.scaleY);
+  const gs = state.grid;
+  const sx = Math.round(nx/gs)*gs, sy = Math.round(ny/gs)*gs;
+  hb.setAttribute('cx', sx); hb.setAttribute('cy', sy);
 
-function rebuild(){
-  const cal = state.material.caliper_mm;
-  const out = state.currentTemplate.build(state.params, cal);
-  state.geometry = { cut: out.cut, crease: out.crease, perf: out.perf.concat(state.perfSegments) };
-  state.vertices = out.vertices;
-  render();
-  // Validate
-  const msgs = validate(state.params, cal);
-  const ul=$("#validation"); ul.innerHTML="";
-  msgs.forEach(m=>{
-    const li=document.createElement("li"); li.textContent=m.msg; li.className = m.ok? "ok":"fail";
-    ul.appendChild(li);
-  });
-}
+  // rewrite path d
+  const p = layers.cut.querySelectorAll('path')[hb.dataset.pathIndex];
+  const nums = p.getAttribute('d').match(/-?\d+(\.\d+)?/g);
+  const idx = hb.dataset.pointIndex*2;
+  nums[idx]=sx.toFixed(3); nums[idx+1]=sy.toFixed(3);
+  // rebuild d by pairing tokens; assume format Mx y Lx y ...
+  let d='M'+nums[0]+' '+nums[1];
+  for(let i=2;i<nums.length;i+=2) d+=' L'+nums[i]+' '+nums[i+1];
+  if(p.getAttribute('d').trim().endsWith('Z')) d+=' Z';
+  p.setAttribute('d', d);
+});
+viewer.addEventListener('pointerup', ()=>{ drag.active=false; });
 
-function exportSVG(){
-  const scale = 3.77953;
-  function pathFromSegs(segs){
-    return segs.map(([x1,y1,x2,y2])=>`M ${x1} ${y1} L ${x2} ${y2}`).join(" ");
+/* ---------- Preflight ---------- */
+function runPreflight(){
+  const g = state.geometry;
+  const m = state.material;
+  const W = [];
+  // generic recommendations
+  const glue = state.params.glue ?? 0;
+  if(glue){
+    const minGlue = Math.max(8, 5*m.t);
+    if(glue < minGlue) W.push(`Glue flap (${glue} mm) is under recommended minimum (${U.round(minGlue)} mm).`);
   }
-  const cut = pathFromSegs(state.geometry.cut);
-  const crease = pathFromSegs(state.geometry.crease);
-  const perf = pathFromSegs(state.geometry.perf);
-  const w=1000/scale, h=700/scale;
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${w}mm" height="${h}mm" viewBox="0 0 ${w} ${h}">
-  <g id="CUT" stroke="#FF0000" stroke-width="0.25" fill="none">${cut?`<path d="${cut}"/>`:""}</g>
-  <g id="CREASE" stroke="#00A0FF" stroke-width="0.25" fill="none" stroke-dasharray="4 2">${crease?`<path d="${crease}"/>`:""}</g>
-  <g id="PERF" stroke="#FF7F00" stroke-width="0.25" fill="none" stroke-dasharray="2 2">${perf?`<path d="${perf}"/>`:""}</g>
-</svg>`;
-  downloadBlob(new Blob([svg], {type:"image/svg+xml"}), `dieline_${state.currentTemplate.id}.svg`);
-}
-
-function exportDXF(){
-  // Extremely minimalistic DXF writer: LINE entities only
-  function dxfLines(segs, layer){
-    return segs.map(([x1,y1,x2,y2])=>`0
-LINE
-8
-${layer}
-10
-${x1}
-20
-${-y1}
-30
-0
-11
-${x2}
-21
-${-y2}
-31
-0`).join("\n");
+  const tuck = state.params.tuck ?? 0;
+  if(tuck && m.type==='paper' && tuck < (2*m.t+2)){
+    W.push(`Tuck tongue (${tuck} mm) may be tight for ${m.t} mm stock (suggest ≥ ${U.round(2*m.t+2)} mm).`);
   }
-  const header = `0
-SECTION
-2
-ENTITIES
-`;
-  const body =
-    dxfLines(state.geometry.cut, "CUT") +
-    dxfLines(state.geometry.crease, "CREASE") +
-    dxfLines(state.geometry.perf, "PERF");
-  const tail = `0
-ENDSEC
-0
-EOF`;
-  const dxf = header + body + tail;
-  downloadBlob(new Blob([dxf], {type:"application/dxf"}), `dieline_${state.currentTemplate.id}.dxf`);
+  if(ui.bleed.value < ((m.type==='corr')?5:3)){
+    W.push(`Bleed set to ${ui.bleed.value} mm; recommend ${m.type==='corr'?5:3} mm.`);
+  }
+  if(state.scoreMode.startsWith('perf') && m.type==='corr'){
+    W.push(`Perforations on corrugated can weaken structure—confirm with plant.`);
+  }
+
+  // show box
+  const box = ui.preflight;
+  if(W.length){
+    box.classList.remove('ok');
+    box.innerHTML = `<strong>Preflight warnings:</strong><ul>${W.map(s=>`<li>${s}</li>`).join('')}</ul>`;
+    box.style.display='block';
+  }else{
+    box.classList.add('ok');
+    box.textContent='Preflight: OK';
+    box.style.display='block';
+  }
 }
 
-function downloadBlob(blob, filename){
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.style.display="none";
-  document.body.appendChild(a); a.click();
-  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 500);
+/* ---------- Export ---------- */
+async function exportZip(){
+  readParams(); generate(); // ensure fresh
+  const {cut,score,perf,bleed,dims,bbox} = state.geometry;
+  const stroke = 0.25; // mm stroke width for export
+
+  // Build export SVG (true mm geometry via viewBox)
+  const svgParts = [];
+  svgParts.push(`<?xml version="1.0" encoding="UTF-8"?>`);
+  svgParts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${bbox.w}mm" height="${bbox.h}mm" viewBox="${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}">`);
+  svgParts.push(`<g id="CUT" stroke="#ff005d" fill="none" stroke-width="${stroke}">`);
+  cut.forEach(p=> svgParts.push(`<path d="${p.d}"/>`));
+  svgParts.push(`</g>`);
+  svgParts.push(`<g id="CREASING" stroke="#00a0ff" fill="none" stroke-width="${stroke}">`);
+  score.forEach(p=> svgParts.push(`<path d="${p.d}"/>`));
+  svgParts.push(`</g>`);
+  svgParts.push(`<g id="PERF" stroke="#ffc400" fill="none" stroke-width="${stroke}" stroke-dasharray="8 3">`);
+  perf.forEach(p=> svgParts.push(`<path d="${p.d}"/>`));
+  svgParts.push(`</g>`);
+  svgParts.push(`<g id="BLEED" stroke="#ff5599" fill="none" stroke-width="${stroke}" stroke-dasharray="6 6">`);
+  bleed.forEach(p=> svgParts.push(`<path d="${p.d}"/>`));
+  svgParts.push(`</g>`);
+  svgParts.push(`</svg>`);
+  const svgText = svgParts.join('');
+
+  // PDF from on-screen viewer clone
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({unit:'mm', format:[bbox.w, bbox.h]});
+  const temp = viewer.cloneNode(true);
+  temp.setAttribute('viewBox', `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`);
+  temp.setAttribute('width', bbox.w);
+  temp.setAttribute('height', bbox.h);
+  // strip grid/handles in pdf
+  temp.querySelector('#gridLayer')?.remove();
+  temp.querySelector('#handlesLayer')?.remove();
+  await window.svg2pdf(temp, pdf, {x:0, y:0, width:bbox.w, height:bbox.h});
+  const pdfBlob = pdf.output('blob');
+
+  // Preflight
+  const preflight = ui.preflight.textContent.includes('OK') ? 'OK' : ui.preflight.innerText;
+
+  // README
+  const readme =
+`Dieline Studio — Export
+Colors (map to spot swatches in Illustrator):
+  CUT       #ff005d
+  CREASING  #00a0ff
+  PERF      #ffc400
+  BLEED     #ff5599
+All paths: strokes only, mm geometry.
+
+Template: ${TEMPLATES.find(t=>t.id===state.templateId).name}
+Params: ${JSON.stringify(state.params)}
+Material: ${state.material.name}
+Score Mode: ${state.scoreMode}`;
+
+  // ZIP
+  const zip = new JSZip();
+  zip.file('dieline.svg', svgText);
+  zip.file('production.pdf', pdfBlob);
+  zip.file('preflight.txt', preflight);
+  zip.file('readme.txt', readme);
+  const blob = await zip.generateAsync({type:'blob'});
+  saveAs(blob, 'dieline_export.zip');
 }
 
-function addPerf(){
-  // Add a horizontal perf across current art at cursor Y (or center if none)
-  const bboxY = 200; // default location
-  const minX = Math.min(...state.geometry.cut.map(s=>Math.min(s[0],s[2])));
-  const maxX = Math.max(...state.geometry.cut.map(s=>Math.max(s[0],s[2])));
-  const y = bboxY;
-  state.perfSegments.push([minX, y, maxX, y]);
-  rebuild();
-}
-function clearPerf(){
-  state.perfSegments = [];
-  rebuild();
-}
-
-/* ---- UI init ---- */
-function init(){
-  // Fill template list
-  const list = $("#templateList");
-  TEMPLATES.forEach(t=>{
-    const el = document.createElement("div");
-    el.className = "template";
-    el.innerHTML = `<div class="thumb">
-      <svg viewBox="0 0 120 50" width="44" height="44">
-        <rect x="2" y="8" width="116" height="34" fill="none" stroke="#999" stroke-width="1"/>
-        <line x1="30" y1="8" x2="30" y2="42" stroke="#999" stroke-width="1"/>
-        <line x1="60" y1="8" x2="60" y2="42" stroke="#999" stroke-width="1"/>
-        <line x1="90" y1="8" x2="90" y2="42" stroke="#999" stroke-width="1"/>
-      </svg>
-    </div>
-    <div>
-      <div class="name">${t.name}</div>
-      <div class="meta">${t.tags}</div>
-    </div>`;
-    el.addEventListener("click", ()=> setTemplate(t));
-    list.appendChild(el);
+/* ---------- Events ---------- */
+ui.templateSearch.addEventListener('input', ()=>{
+  const q = ui.templateSearch.value.toLowerCase();
+  $$('option', ui.templateSelect).forEach(o=>{
+    o.hidden = !o.textContent.toLowerCase().includes(q);
   });
+});
 
-  // Defaults
-  setTemplate(TEMPLATES[0]);
+ui.templateSelect.addEventListener('change', ()=>{ renderParamFields(); readParams(); generate(); draw(); });
 
-  // Controls
-  $("#units").addEventListener("change", (e)=>{
-    state.units = e.target.value;
-    // rebuild parameter inputs for unit conversion
-    setTemplate(state.currentTemplate);
-  });
-  $("#materialPreset").addEventListener("change", (e)=>{
-    const mat = MATERIALS[e.target.value];
-    state.material = { id:e.target.value, name:mat.name, caliper_mm: mat.caliper_mm };
-    rebuild();
-  });
-  $("#snapMode").addEventListener("change", (e)=>{ state.snapMode = e.target.value; });
-  $("#gridSize").addEventListener("input", (e)=>{ state.gridSizeMM = Math.max(1, parseFloat(e.target.value)||5); render(); });
+ui.material.addEventListener('change', ()=>{ updateMaterialNote(); runPreflight(); });
+ui.units.addEventListener('change', ()=>{
+  state.units = ui.units.value;
+  // simple units toggle for labels; geometry remains mm
+  draw();
+});
+ui.grid.addEventListener('change', ()=>{ state.grid=parseFloat(ui.grid.value)||1; draw(); });
+ui.strokePx.addEventListener('change', ()=>{ state.strokePx=parseFloat(ui.strokePx.value)||2.5; draw(); });
+ui.scoreMode.addEventListener('change', ()=>{ readParams(); generate(); draw(); });
 
-  $("#btnAddPerf").addEventListener("click", addPerf);
-  $("#btnClearPerf").addEventListener("click", clearPerf);
-  $("#btnExportSVG").addEventListener("click", exportSVG);
-  $("#btnExportDXF").addEventListener("click", exportDXF);
+ui.btnApply.addEventListener('click', ()=>{ readParams(); generate(); draw(); });
+ui.btnReset.addEventListener('click', ()=>{
+  state.params={}; renderParamFields(); readParams(); generate(); draw();
+});
 
-  attachDrag();
-  render();
+ui.btnExport.addEventListener('click', exportZip);
+
+ui.btnFit.addEventListener('click', ()=> updateViewBoxToFit(state.geometry.bbox));
+ui.btnZoomIn.addEventListener('click', ()=> zoomBy(0.9));   // decrease viewBox => zoom in
+ui.btnZoomOut.addEventListener('click', ()=> zoomBy(1.1));  // increase viewBox => zoom out
+ui.btn100.addEventListener('click', zoomTo100);
+
+ui.toggleGrid.addEventListener('change', e=>{ state.showGrid=e.target.checked; draw(); });
+ui.toggleDims.addEventListener('change', e=>{ state.showDims=e.target.checked; draw(); });
+ui.toggleGuides.addEventListener('change', e=>{ state.showGuides=e.target.checked; draw(); });
+ui.toggleEdit.addEventListener('change', e=>{ state.editMode=e.target.checked; refreshHandles(); });
+
+/* Keyboard shortcuts */
+window.addEventListener('keydown', (e)=>{
+  if(e.key==='f' || e.key==='F'){ updateViewBoxToFit(state.geometry.bbox); }
+  if(e.key==='+'){ zoomBy(0.9); }
+  if(e.key==='-'){ zoomBy(1.1); }
+});
+
+/* ---------- Boot ---------- */
+function boot(){
+  populateTemplates();
+  populateMaterials();
+  renderParamFields();
+  readParams();
+  generate();
+  draw();
 }
-
-document.addEventListener("DOMContentLoaded", init);
+document.addEventListener('DOMContentLoaded', boot);
