@@ -1,0 +1,24 @@
+
+:root { font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif; color: #111; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #fafafa; }
+header { padding: 12px 20px; border-bottom: 1px solid #e8e8e8; background: white; position: sticky; top: 0; z-index: 1; }
+.container { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px; }
+.card { background: white; border: 1px solid #e8e8e8; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.03); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+label { display: block; font-size: 12px; color: #444; margin-bottom: 4px; }
+input, select { width: 100%; padding: 8px 10px; border: 1px solid #d6d6d6; border-radius: 8px; font-size: 14px; }
+fieldset { border: 0; padding: 0; margin: 0 0 12px 0; }
+legend { font-weight: 700; margin-bottom: 8px; }
+button { padding: 8px 12px; border: 1px solid #333; background: #111; color: white; border-radius: 8px; cursor: pointer; }
+button.ghost { background: white; color: #111; border-color: #aaa; }
+svg { width: 100%; height: auto; background: repeating-linear-gradient(45deg, #fff, #fff 12px, #fafafa 12px, #fafafa 24px); }
+.cut { stroke: #111; stroke-width: 1.5; fill: none; }
+.crease { stroke: #d00; stroke-width: 1; stroke-dasharray: 6 3; fill: none; }
+.perf { stroke: #2c9b61; stroke-width: 1; stroke-dasharray: 4 3; fill: none; }
+.dims { font: 10px/1 sans-serif; fill: #2a2a2a; }
+.row { display:flex; gap:8px; align-items:center; }
+.toolbar { display:flex; gap:8px; flex-wrap: wrap; }
+.badge { padding: 2px 8px; border: 1px solid #ddd; border-radius: 999px; background:#f6f6f6; font-size:12px; }
+.danger { color: #b42318; }
